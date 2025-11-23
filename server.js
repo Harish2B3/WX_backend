@@ -14,6 +14,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const mongoSanitize = require('express-mongo-sanitize');
 const { body, validationResult, param } = require('express-validator');
+const path = require('path');
 
 
 const app = express();
@@ -85,6 +86,21 @@ console.log("Rate limiting configured for authentication routes.");
 
 app.use(express.json());
 app.use(mongoSanitize()); // Sanitize input to prevent NoSQL injection
+
+// --- Frontend Static File Serving ---
+const frontendPath = path.join(__dirname, '..');
+console.log(`Serving static files from: ${frontendPath}`);
+app.use(express.static(frontendPath, {
+    setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.tsx')) {
+            // This tells the browser to treat .tsx files as JavaScript modules.
+            // It is necessary for no-build-step environments that perform
+            // in-browser transpilation.
+            res.setHeader('Content-Type', 'text/javascript');
+        }
+    }
+}));
+
 
 const TELEGRAM_MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
 
@@ -693,6 +709,13 @@ app.get('/api/folders/zip/:folderId', authenticateToken, mongoIdParamValidation(
         console.error('ZIP creation failed:', err);
         res.status(500).send('Failed to create ZIP file');
     }
+});
+
+// --- SPA Fallback ---
+// This should be the last route. It serves the frontend's index.html
+// for any request that doesn't match an API route.
+app.get(/^(?!\/api).*/, (req, res) => {
+    res.sendFile(path.join(frontendPath, 'index.html'));
 });
 
 app.listen(port, () => {
