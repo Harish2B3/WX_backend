@@ -14,7 +14,6 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const mongoSanitize = require('express-mongo-sanitize');
 const { body, validationResult, param } = require('express-validator');
-const path = require('path');
 
 
 const app = express();
@@ -27,52 +26,11 @@ app.set('trust proxy', 1);
 console.log("Starting WormX Drive backend...");
 
 // --- Security Middleware ---
-// Configure Helmet with a Content Security Policy (CSP) to allow external resources.
-// This is crucial for allowing scripts and styles from CDNs to be loaded by the browser.
-app.use(
-    helmet({
-      contentSecurityPolicy: {
-        directives: {
-          ...helmet.contentSecurityPolicy.getDefaultDirectives(),
-          "script-src": [
-            "'self'",
-            "https://cdn.tailwindcss.com",
-            "https://aistudiocdn.com",
-            "'unsafe-inline'", // For inline Tailwind config
-          ],
-          "style-src": [
-            "'self'",
-            "https://fonts.googleapis.com",
-            "'unsafe-inline'", // For inline styles
-          ],
-          "font-src": ["'self'", "https://fonts.googleapis.com", "https://fonts.gstatic.com"],
-          // connect-src allows the frontend to talk to the backend API and fetch fonts.
-          "connect-src": [
-            "'self'",
-            "https://fonts.googleapis.com",
-            "https://fonts.gstatic.com",
-          ],
-          // blob: is required for file previews (images, videos, PDFs) that are created dynamically.
-          "img-src": ["'self'", "data:", "blob:"], 
-          "media-src": ["'self'", "blob:"],
-        },
-      },
-    })
-);
+app.use(helmet());
 
-const whitelist = ['http://localhost:3000', 'http://127.0.0.1:3000', process.env.CLIENT_URL].filter(Boolean);
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    if (whitelist.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-};
-app.use(cors(corsOptions));
+// Allow all cross-origin requests. This is simpler for development and for use in
+// environments like online IDEs where the frontend origin might be dynamic.
+app.use(cors());
 console.log("Security middleware (Helmet, CORS) configured.");
 
 const authLimiter = rateLimit({
@@ -86,21 +44,6 @@ console.log("Rate limiting configured for authentication routes.");
 
 app.use(express.json());
 app.use(mongoSanitize()); // Sanitize input to prevent NoSQL injection
-
-// --- Frontend Static File Serving ---
-const frontendPath = path.join(__dirname, '..');
-console.log(`Serving static files from: ${frontendPath}`);
-app.use(express.static(frontendPath, {
-    setHeaders: (res, filePath) => {
-        if (filePath.endsWith('.tsx')) {
-            // This tells the browser to treat .tsx files as JavaScript modules.
-            // It is necessary for no-build-step environments that perform
-            // in-browser transpilation.
-            res.setHeader('Content-Type', 'text/javascript');
-        }
-    }
-}));
-
 
 const TELEGRAM_MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
 
@@ -298,22 +241,19 @@ app.post('/api/auth/login', authLimiter, loginValidation, validate, async (req, 
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
-// Create a folder
-app.post('/api/folders', authenticateToken, createFolderValidation, validate, async (req, res) => {
+// Get files in a folder
+app.get('/api/files/:parentId?', authenticateToken, [param('parentId').optional().custom(isValidParentId)], validate, async (req, res) => {
     try {
         const ownerId = new mongoose.Types.ObjectId(req.user.id);
-        const { folderName, parentId } = req.body;
-        const newFolder = new StoredFile({
+        const { parentId } = req.params;
+        const files = await StoredFile.find({
             ownerId,
-            parentId,
-            fileName: folderName,
-            mimeType: 'application/vnd.wormx-cloud.folder',
-            fileSize: null
+            parentId: parentId || 'root',
+            trashed: false
         });
-        await newFolder.save();
-        res.status(201).json(newFolder.toObject());
+        res.json(files.map(f => f.toObject()));
     } catch (error) {
-        res.status(500).json({ message: 'Folder creation failed.' });
+        res.status(500).json({ message: "Failed to fetch files." });
     }
 });
 
@@ -415,42 +355,22 @@ app.get('/api/files/download/:id', authenticateToken, mongoIdParamValidation('id
     }
 });
 
-
-// --- Favorites and Quick Access (Specific routes should come before general ones) ---
-
-app.get('/api/files/favorites', authenticateToken, async (req, res) => {
+// Create a folder
+app.post('/api/folders', authenticateToken, createFolderValidation, validate, async (req, res) => {
     try {
         const ownerId = new mongoose.Types.ObjectId(req.user.id);
-        const files = await StoredFile.find({ ownerId, isFavorite: true, trashed: false });
-        res.json(files.map(f => f.toObject()));
-    } catch (error) {
-        res.status(500).json({ message: 'Failed to get favorite files.' });
-    }
-});
-
-app.get('/api/files/quickaccess', authenticateToken, async (req, res) => {
-    try {
-        const ownerId = new mongoose.Types.ObjectId(req.user.id);
-        const files = await StoredFile.find({ ownerId, isQuickAccess: true, trashed: false });
-        res.json(files.map(f => f.toObject()));
-    } catch (error) {
-        res.status(500).json({ message: 'Failed to get quick access files.' });
-    }
-});
-
-// Get files in a folder (General route should come after specific ones)
-app.get('/api/files/:parentId?', authenticateToken, [param('parentId').optional().custom(isValidParentId)], validate, async (req, res) => {
-    try {
-        const ownerId = new mongoose.Types.ObjectId(req.user.id);
-        const { parentId } = req.params;
-        const files = await StoredFile.find({
+        const { folderName, parentId } = req.body;
+        const newFolder = new StoredFile({
             ownerId,
-            parentId: parentId || 'root',
-            trashed: false
+            parentId,
+            fileName: folderName,
+            mimeType: 'application/vnd.wormx-cloud.folder',
+            fileSize: null
         });
-        res.json(files.map(f => f.toObject()));
+        await newFolder.save();
+        res.status(201).json(newFolder.toObject());
     } catch (error) {
-        res.status(500).json({ message: "Failed to fetch files." });
+        res.status(500).json({ message: 'Folder creation failed.' });
     }
 });
 
@@ -534,6 +454,25 @@ const toggleFlag = (flag) => async (req, res) => {
 app.put('/api/files/favorite/:id', authenticateToken, mongoIdParamValidation('id'), validate, toggleFlag('isFavorite'));
 app.put('/api/files/quickaccess/:id', authenticateToken, mongoIdParamValidation('id'), validate, toggleFlag('isQuickAccess'));
 
+app.get('/api/files/favorites', authenticateToken, async (req, res) => {
+    try {
+        const ownerId = new mongoose.Types.ObjectId(req.user.id);
+        const files = await StoredFile.find({ ownerId, isFavorite: true, trashed: false });
+        res.json(files.map(f => f.toObject()));
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to get favorite files.' });
+    }
+});
+
+app.get('/api/files/quickaccess', authenticateToken, async (req, res) => {
+    try {
+        const ownerId = new mongoose.Types.ObjectId(req.user.id);
+        const files = await StoredFile.find({ ownerId, isQuickAccess: true, trashed: false });
+        res.json(files.map(f => f.toObject()));
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to get quick access files.' });
+    }
+});
 
 // --- Search ---
 const buildPathForFile = async (fileId) => {
@@ -709,13 +648,6 @@ app.get('/api/folders/zip/:folderId', authenticateToken, mongoIdParamValidation(
         console.error('ZIP creation failed:', err);
         res.status(500).send('Failed to create ZIP file');
     }
-});
-
-// --- SPA Fallback ---
-// This should be the last route. It serves the frontend's index.html
-// for any request that doesn't match an API route.
-app.get(/^(?!\/api).*/, (req, res) => {
-    res.sendFile(path.join(frontendPath, 'index.html'));
 });
 
 app.listen(port, () => {
