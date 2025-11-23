@@ -1,4 +1,3 @@
-
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -252,19 +251,22 @@ app.post('/api/auth/login', authLimiter, loginValidation, validate, async (req, 
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
-// Get files in a folder
-app.get('/api/files/:parentId?', authenticateToken, [param('parentId').optional().custom(isValidParentId)], validate, async (req, res) => {
+// Create a folder
+app.post('/api/folders', authenticateToken, createFolderValidation, validate, async (req, res) => {
     try {
         const ownerId = new mongoose.Types.ObjectId(req.user.id);
-        const { parentId } = req.params;
-        const files = await StoredFile.find({
+        const { folderName, parentId } = req.body;
+        const newFolder = new StoredFile({
             ownerId,
-            parentId: parentId || 'root',
-            trashed: false
+            parentId,
+            fileName: folderName,
+            mimeType: 'application/vnd.wormx-cloud.folder',
+            fileSize: null
         });
-        res.json(files.map(f => f.toObject()));
+        await newFolder.save();
+        res.status(201).json(newFolder.toObject());
     } catch (error) {
-        res.status(500).json({ message: "Failed to fetch files." });
+        res.status(500).json({ message: 'Folder creation failed.' });
     }
 });
 
@@ -304,6 +306,12 @@ app.post('/api/files/upload/:parentId', authenticateToken, [param('parentId').cu
             maxContentLength: Infinity,
             maxBodyLength: Infinity,
         });
+
+        if (!response.data || !response.data.ok || !response.data.result || !response.data.result.document) {
+            console.error("Telegram sendDocument unexpected response:", response.data);
+            throw new Error('Telegram API did not return expected document data.');
+        }
+
         const tgFile = response.data.result.document;
 
         const newFile = new StoredFile({
@@ -319,6 +327,7 @@ app.post('/api/files/upload/:parentId', authenticateToken, [param('parentId').cu
         await newFile.save();
         res.status(201).json(newFile.toObject());
     } catch (error) {
+        console.error("Detailed upload error:", error); // Log the full error object
         console.error("Upload error:", error.response ? error.response.data : error.message);
         res.status(500).json({ message: 'File upload failed. The file may be too large or the format is not supported.' });
     } finally {
@@ -359,22 +368,42 @@ app.get('/api/files/download/:id', authenticateToken, mongoIdParamValidation('id
     }
 });
 
-// Create a folder
-app.post('/api/folders', authenticateToken, createFolderValidation, validate, async (req, res) => {
+
+// --- Favorites and Quick Access (Specific routes should come before general ones) ---
+
+app.get('/api/files/favorites', authenticateToken, async (req, res) => {
     try {
         const ownerId = new mongoose.Types.ObjectId(req.user.id);
-        const { folderName, parentId } = req.body;
-        const newFolder = new StoredFile({
-            ownerId,
-            parentId,
-            fileName: folderName,
-            mimeType: 'application/vnd.wormx-cloud.folder',
-            fileSize: null
-        });
-        await newFolder.save();
-        res.status(201).json(newFolder.toObject());
+        const files = await StoredFile.find({ ownerId, isFavorite: true, trashed: false });
+        res.json(files.map(f => f.toObject()));
     } catch (error) {
-        res.status(500).json({ message: 'Folder creation failed.' });
+        res.status(500).json({ message: 'Failed to get favorite files.' });
+    }
+});
+
+app.get('/api/files/quickaccess', authenticateToken, async (req, res) => {
+    try {
+        const ownerId = new mongoose.Types.ObjectId(req.user.id);
+        const files = await StoredFile.find({ ownerId, isQuickAccess: true, trashed: false });
+        res.json(files.map(f => f.toObject()));
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to get quick access files.' });
+    }
+});
+
+// Get files in a folder (General route should come after specific ones)
+app.get('/api/files/:parentId?', authenticateToken, [param('parentId').optional().custom(isValidParentId)], validate, async (req, res) => {
+    try {
+        const ownerId = new mongoose.Types.ObjectId(req.user.id);
+        const { parentId } = req.params;
+        const files = await StoredFile.find({
+            ownerId,
+            parentId: parentId || 'root',
+            trashed: false
+        });
+        res.json(files.map(f => f.toObject()));
+    } catch (error) {
+        res.status(500).json({ message: "Failed to fetch files." });
     }
 });
 
@@ -458,25 +487,6 @@ const toggleFlag = (flag) => async (req, res) => {
 app.put('/api/files/favorite/:id', authenticateToken, mongoIdParamValidation('id'), validate, toggleFlag('isFavorite'));
 app.put('/api/files/quickaccess/:id', authenticateToken, mongoIdParamValidation('id'), validate, toggleFlag('isQuickAccess'));
 
-app.get('/api/files/favorites', authenticateToken, async (req, res) => {
-    try {
-        const ownerId = new mongoose.Types.ObjectId(req.user.id);
-        const files = await StoredFile.find({ ownerId, isFavorite: true, trashed: false });
-        res.json(files.map(f => f.toObject()));
-    } catch (error) {
-        res.status(500).json({ message: 'Failed to get favorite files.' });
-    }
-});
-
-app.get('/api/files/quickaccess', authenticateToken, async (req, res) => {
-    try {
-        const ownerId = new mongoose.Types.ObjectId(req.user.id);
-        const files = await StoredFile.find({ ownerId, isQuickAccess: true, trashed: false });
-        res.json(files.map(f => f.toObject()));
-    } catch (error) {
-        res.status(500).json({ message: 'Failed to get quick access files.' });
-    }
-});
 
 // --- Search ---
 const buildPathForFile = async (fileId) => {
