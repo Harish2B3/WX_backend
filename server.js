@@ -20,6 +20,10 @@ const { body, validationResult, param } = require('express-validator');
 const app = express();
 const port = 3001;
 
+// Trust the first proxy (e.g., Render's load balancer)
+// This is crucial for express-rate-limit to work correctly behind a proxy.
+app.set('trust proxy', 1);
+
 console.log("Starting WormX Drive backend...");
 
 // --- Security Middleware ---
