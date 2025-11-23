@@ -26,7 +26,38 @@ app.set('trust proxy', 1);
 console.log("Starting WormX Drive backend...");
 
 // --- Security Middleware ---
-app.use(helmet());
+// Configure Helmet with a Content Security Policy (CSP) to allow external resources.
+// This is crucial for allowing scripts and styles from CDNs to be loaded by the browser.
+app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+          "script-src": [
+            "'self'",
+            "https://cdn.tailwindcss.com",
+            "https://aistudiocdn.com",
+            "'unsafe-inline'", // For inline Tailwind config
+          ],
+          "style-src": [
+            "'self'",
+            "https://fonts.googleapis.com",
+            "'unsafe-inline'", // For inline styles
+          ],
+          "font-src": ["'self'", "https://fonts.googleapis.com", "https://fonts.gstatic.com"],
+          // connect-src allows the frontend to talk to the backend API and fetch fonts.
+          "connect-src": [
+            "'self'",
+            "https://fonts.googleapis.com",
+            "https://fonts.gstatic.com",
+          ],
+          // blob: is required for file previews (images, videos, PDFs) that are created dynamically.
+          "img-src": ["'self'", "data:", "blob:"], 
+          "media-src": ["'self'", "blob:"],
+        },
+      },
+    })
+);
 
 const whitelist = ['http://localhost:3000', 'http://127.0.0.1:3000', process.env.CLIENT_URL].filter(Boolean);
 const corsOptions = {
