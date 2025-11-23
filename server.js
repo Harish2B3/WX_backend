@@ -27,36 +27,36 @@ app.use(helmet());
 
 const whitelist = ['http://localhost:3000', 'http://127.0.0.1:3000', process.env.CLIENT_URL].filter(Boolean);
 const corsOptions = {
-    origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps or curl requests)
-        if (!origin) return callback(null, true);
-        if (whitelist.indexOf(origin) !== -1) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    if (whitelist.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
 };
 app.use(cors(corsOptions));
 console.log("Security middleware (Helmet, CORS) configured.");
 
 const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 10, // Limit each IP to 10 requests per windowMs
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: 'Too many requests from this IP, please try again after 15 minutes',
+	windowMs: 15 * 60 * 1000, // 15 minutes
+	max: 10, // Limit each IP to 10 requests per windowMs
+	standardHeaders: true, 
+	legacyHeaders: false, 
+  message: 'Too many requests from this IP, please try again after 15 minutes',
 });
 console.log("Rate limiting configured for authentication routes.");
 
 app.use(express.json());
 app.use(mongoSanitize()); // Sanitize input to prevent NoSQL injection
 
-const MAX_UPLOAD_SIZE = 2 * 1024 * 1024 * 1024; // 2 GB
+const TELEGRAM_MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
 
-const upload = multer({
-    storage: multer.memoryStorage(), // Use memory storage for speed
-    limits: { fileSize: MAX_UPLOAD_SIZE }
+const upload = multer({ 
+    storage: multer.diskStorage({}), // use OS default temp dir for large files
+    limits: { fileSize: TELEGRAM_MAX_FILE_SIZE_BYTES } // Telegram Bot API has a 50MB limit for this upload method.
 });
 console.log("Middleware (express.json, multer, mongo-sanitize) configured.");
 
@@ -77,17 +77,17 @@ for (const [key, value] of Object.entries(requiredEnvVars)) {
 // --- MongoDB Connection ---
 console.log("Attempting to connect to MongoDB...");
 mongoose.connect(DB_URI)
-    .then(() => {
-        console.log("✅ Successfully connected to MongoDB.");
-    })
-    .catch(err => {
-        console.error("---------------------------------------------------------------");
-        console.error("❌ MongoDB connection error. Please ensure MongoDB is running");
-        console.error("and the DB_URI in your .env file is correct.");
-        console.error("Error details:", err.message);
-        console.error("---------------------------------------------------------------");
-        process.exit(1);
-    });
+  .then(() => {
+    console.log("✅ Successfully connected to MongoDB.");
+  })
+  .catch(err => {
+    console.error("---------------------------------------------------------------");
+    console.error("❌ MongoDB connection error. Please ensure MongoDB is running");
+    console.error("and the DB_URI in your .env file is correct.");
+    console.error("Error details:", err.message);
+    console.error("---------------------------------------------------------------");
+    process.exit(1);
+  });
 
 // --- Mongoose Schemas ---
 const UserSchema = new mongoose.Schema({
@@ -95,37 +95,37 @@ const UserSchema = new mongoose.Schema({
     email: { type: String, required: true, unique: true, index: true, lowercase: true, trim: true },
     phone: { type: String, required: true, unique: true, index: true, trim: true },
     password: { type: String, required: true }
-},
-    { timestamps: true }
+  },
+  { timestamps: true }
 );
 
 UserSchema.pre("save", async function (next) {
-    if (!this.isModified("password")) return next();
-    this.password = await bcrypt.hash(this.password, 10);
-    next();
+  if (!this.isModified("password")) return next();
+  this.password = await bcrypt.hash(this.password, 10);
+  next();
 });
 
 UserSchema.methods.comparePassword = function (plain) {
-    return bcrypt.compare(plain, this.password);
+  return bcrypt.compare(plain, this.password);
 };
 
 const StoredFileSchema = new mongoose.Schema({
-    // Telegram-specific fields
-    fileId: { type: String, unique: true, sparse: true, index: true },
-    fileUniqueId: { type: String, unique: true, sparse: true, index: true },
+  // Telegram-specific fields
+  fileId: { type: String, unique: true, sparse: true, index: true },
+  fileUniqueId: { type: String, unique: true, sparse: true, index: true },
 
-    // Metadata and hierarchy
-    fileName: { type: String, required: true },
-    mimeType: { type: String, required: true },
-    fileSize: { type: Number, default: null },
-    parentId: { type: String, required: true, default: 'root', index: true },
-    ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  // Metadata and hierarchy
+  fileName: { type: String, required: true },
+  mimeType: { type: String, required: true },
+  fileSize: { type: Number, default: null },
+  parentId: { type: String, required: true, default: 'root', index: true },
+  ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
 
-    // App-specific flags
-    trashed: { type: Boolean, default: false, index: true },
-    trashedAt: { type: Date, default: null },
-    isFavorite: { type: Boolean, default: false },
-    isQuickAccess: { type: Boolean, default: false },
+  // App-specific flags
+  trashed: { type: Boolean, default: false, index: true },
+  trashedAt: { type: Date, default: null },
+  isFavorite: { type: Boolean, default: false },
+  isQuickAccess: { type: Boolean, default: false },
 }, { timestamps: true });
 
 const User = mongoose.model("User", UserSchema);
@@ -183,9 +183,9 @@ const loginValidation = [
 ];
 const createFolderValidation = [
     body('folderName').notEmpty().withMessage('Folder name is required.')
-        .isLength({ max: 100 }).withMessage('Folder name cannot exceed 100 characters.')
-        .matches(/^[^\\/:"*?<>|]+$/).withMessage('Folder name contains invalid characters.')
-        .trim(),
+      .isLength({ max: 100 }).withMessage('Folder name cannot exceed 100 characters.')
+      .matches(/^[^\\/:"*?<>|]+$/).withMessage('Folder name contains invalid characters.')
+      .trim(),
     body('parentId').custom(isValidParentId)
 ];
 const fileIdsValidation = [
@@ -205,7 +205,7 @@ const mongoIdParamValidation = (paramName) => [
 app.post('/api/auth/register', authLimiter, registerValidation, validate, async (req, res) => {
     try {
         const { username, email, phone, password } = req.body;
-
+        
         const existingUser = await User.findOne({ $or: [{ email }, { username }] });
         if (existingUser) {
             return res.status(409).json({ message: 'User with this email or username already exists.' });
@@ -235,7 +235,7 @@ app.post('/api/auth/login', authLimiter, loginValidation, validate, async (req, 
 
         const payload = { id: user._id };
         const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '1d' });
-
+        
         const userObj = user.toObject();
         delete userObj.password;
 
@@ -270,7 +270,7 @@ const handleUploadMiddleware = (req, res, next) => {
     uploadHandler(req, res, function (err) {
         if (err instanceof multer.MulterError) {
             if (err.code === 'LIMIT_FILE_SIZE') {
-                return res.status(413).json({ message: 'File is too large. The maximum upload size is 2 GB.' });
+                return res.status(413).json({ message: 'File is too large. The maximum upload size is 50 MB.' });
             }
             return res.status(400).json({ message: `File upload error: ${err.message}` });
         } else if (err) {
@@ -290,12 +290,12 @@ app.post('/api/files/upload/:parentId', authenticateToken, [param('parentId').cu
         const ownerId = new mongoose.Types.ObjectId(req.user.id);
         const { parentId } = req.params;
         const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`;
-
+        
         const form = new FormData();
         form.append('chat_id', CHAT_ID);
-        form.append('document', req.file.buffer, req.file.originalname);
+        form.append('document', fs.createReadStream(req.file.path), req.file.originalname);
 
-        const response = await axios.post(url, form, {
+        const response = await axios.post(url, form, { 
             headers: form.getHeaders(),
             maxContentLength: Infinity,
             maxBodyLength: Infinity,
@@ -317,6 +317,14 @@ app.post('/api/files/upload/:parentId', authenticateToken, [param('parentId').cu
     } catch (error) {
         console.error("Upload error:", error.response ? error.response.data : error.message);
         res.status(500).json({ message: 'File upload failed. The file may be too large or the format is not supported.' });
+    } finally {
+        if (req.file && req.file.path) {
+            fs.unlink(req.file.path, (err) => {
+                if (err) {
+                    console.error("Error deleting temporary upload file:", req.file.path, err);
+                }
+            });
+        }
     }
 });
 
@@ -335,7 +343,7 @@ app.get('/api/files/download/:id', authenticateToken, mongoIdParamValidation('id
 
         const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
         const fileResponse = await axios.get(fileUrl, { responseType: 'stream' });
-
+        
         res.setHeader('Content-Disposition', `attachment; filename="${fileDoc.fileName}"`);
         res.setHeader('Content-Type', fileDoc.mimeType);
         res.setHeader('Content-Length', fileDoc.fileSize);
@@ -471,7 +479,7 @@ const buildPathForFile = async (fileId) => {
     const path = [];
     const visitedIds = new Set();
     let currentFile = await StoredFile.findById(fileId).lean();
-
+    
     while (currentFile) {
         if (visitedIds.has(currentFile._id.toString())) break;
         visitedIds.add(currentFile._id.toString());
@@ -494,7 +502,7 @@ app.get('/api/search', authenticateToken, async (req, res) => {
             trashed: false,
             fileName: { $regex: query, $options: 'i' }
         };
-
+        
         // File Type Filter
         if (type) {
             switch (type) {
@@ -504,7 +512,7 @@ app.get('/api/search', authenticateToken, async (req, res) => {
                 case 'folder': filter.mimeType = 'application/vnd.wormx-cloud.folder'; break;
             }
         }
-
+        
         // Date Modified Filter
         if (dateRange) {
             const now = new Date();
@@ -559,30 +567,24 @@ app.get('/api/stats/storage', authenticateToken, async (req, res) => {
 app.get('/api/stats/categories', authenticateToken, async (req, res) => {
     const ownerId = new mongoose.Types.ObjectId(req.user.id);
     const results = await StoredFile.aggregate([
-        { $match: { ownerId, trashed: false, fileSize: { $ne: null } } },
-        {
-            $project: {
-                category: {
-                    $switch: {
-                        branches: [
-                            { case: { $regexMatch: { input: '$mimeType', regex: '^image/' } }, then: 'image' },
-                            { case: { $regexMatch: { input: '$mimeType', regex: '^video/' } }, then: 'video' },
-                            { case: { $in: ['$mimeType', ['application/pdf', 'text/plain']] }, then: 'document' },
-                            { case: { $regexMatch: { input: '$mimeType', regex: 'document|spreadsheet' } }, then: 'document' }
-                        ],
-                        default: 'others'
-                    }
-                },
-                fileSize: 1
-            }
-        },
-        {
-            $group: {
-                _id: '$category',
-                totalSize: { $sum: '$fileSize' },
-                count: { $sum: 1 }
-            }
-        }
+      { $match: { ownerId, trashed: false, fileSize: { $ne: null } } },
+      { $project: {
+          category: { $switch: {
+              branches: [
+                  { case: { $regexMatch: { input: '$mimeType', regex: '^image/' } }, then: 'image' },
+                  { case: { $regexMatch: { input: '$mimeType', regex: '^video/' } }, then: 'video' },
+                  { case: { $in: ['$mimeType', ['application/pdf', 'text/plain']] }, then: 'document' },
+                  { case: { $regexMatch: { input: '$mimeType', regex: 'document|spreadsheet' } }, then: 'document' }
+              ],
+              default: 'others'
+          }},
+          fileSize: 1
+      }},
+      { $group: {
+          _id: '$category',
+          totalSize: { $sum: '$fileSize' },
+          count: { $sum: 1 }
+      }}
     ]);
     const stats = results.reduce((acc, item) => {
         acc[item._id] = { totalSize: item.totalSize, count: item.count };
@@ -619,12 +621,12 @@ app.get('/api/folders/zip/:folderId', authenticateToken, mongoIdParamValidation(
     try {
         const { folderId } = req.params;
         const ownerId = new mongoose.Types.ObjectId(req.user.id);
-
+        
         const rootFolder = await StoredFile.findOne({ _id: folderId, ownerId }).lean();
         if (!rootFolder) return res.status(404).send('Folder not found or you do not have permission to access it.');
 
         const filesToZip = await getAllFilesRecursive(ownerId, folderId);
-
+        
         res.setHeader('Content-Type', 'application/zip');
         res.setHeader('Content-Disposition', `attachment; filename=${rootFolder.fileName}.zip`);
 
